@@ -74,7 +74,7 @@ for f in fileList:
         sys.stdout.write('^')
         continue
 
-    # Populate FileUpdate table
+    # Add row to FileUpdate table
     cursor.execute("""
     merge FileUpdate as T
     using (select ?, ?) as S (Filename, LastUpdate)
@@ -123,6 +123,7 @@ for f in fileList:
         if 'form02' in f.lower():
             cycle += 1
         
+        full_cycle = False
         for row in reader:
             #Full Charge Condition
             if int(row["ES"])==133 and row["State"]=='C':
@@ -139,10 +140,13 @@ for f in fileList:
                     halfCycle=None
                     cycle += 1
             #Full Cycle Condition
+            if int(row["ES"])==193 and row["State"]=='O':
+                full_cycle = True
         
-        for key in chargeCap:
-            c = CellCycle(test_req, lot_code, cell_idx, end_cycle_dts[key], key, cycle_type, chargeCap[key], dischargeCap[key])
-            cellCycles.append(c)
+        if full_cycle:
+            for key in chargeCap:
+                c = CellCycle(test_req, lot_code, cell_idx, end_cycle_dts[key], key, cycle_type, chargeCap[key], dischargeCap[key])
+                cellCycles.append(c)
             
         sys.stdout.write('.')
 #        print fileList[i], "Charge Cap: ", chargeCap, " Discharge Cap: ", dischargeCap
