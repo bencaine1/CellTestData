@@ -123,10 +123,10 @@ for f in fileList:
     finally:
         myFile.close()
 
-for c in cellCycles:
-    print c
+#for c in cellCycles:
+#    print c
 
-print "These files didn't process: ", errorFiles
+print "\nThese files didn't process: ", errorFiles
 
 ########## ADD TO DB ###########
 
@@ -143,17 +143,23 @@ cnxn.autocommit = True
 cursor = cnxn.cursor()
 
 # Populate TestRequest table
+print 'Populating TestRequest table...'
 test_req_list = []
 test_req_uid = 1
 for c in cellCycles:
     if c.test_req not in test_req_list:
         cursor.execute("""
-        insert into TestRequest(testReq_UID, testReq_num)
-        values (?,?)
+        merge TestRequest as T
+        using (select ?, ?) as S (testReq_UID, testReq_num)
+        on S.testReq_num = T.testReq_num
+        when not matched then insert(testReq_UID, testReq_num)
+        values (S.testReq_UID, S.testReq_num);
         """, test_req_uid, c.test_req)
         test_req_list.append(c.test_req)
         test_req_uid += 1
+        
 # Populate CellAssembly table
+print 'Populating CellAssembly table...'
 lot_code_list = []
 cell_assy_uid = 1
 for c in cellCycles:
@@ -167,13 +173,17 @@ for c in cellCycles:
         if row:
             test_req_uid = row[0]
         cursor.execute("""
-        insert into CellAssembly(cellAssy_UID, lotCode, testReq_UID, cell_index)
-        values (?,?,?,?)
+        merge CellAssembly as T
+        using (select ?, ?, ?, ?) as S (cellAssy_UID, lotCode, testReq_UID, cell_index)
+        on S.lotCode = T.lotCode
+        when not matched then insert(cellAssy_UID, lotCode, testReq_UID, cell_index)
+        values (S.cellAssy_UID, S.lotCode, S.testReq_UID, S.cell_index);
         """, cell_assy_uid, c.lot_code, test_req_uid, c.cell_idx)
         lot_code_list.append(c.lot_code)
         cell_assy_uid += 1
 
 # Populate CellCycle table
+print 'Populating CellCycle table...'
 cell_cycle_uid = 1
 for c in cellCycles:
     # determine cellAssy_UID
@@ -187,8 +197,11 @@ for c in cellCycles:
     if row:
         cell_assy_uid = row[0]
     cursor.execute("""
-    insert into CellCycle(cellCycle_UID, cellAssy_UID, endCycle_dts, cycle_num, cycle_type, capacity_charge, capacity_discharge)
-    values (?,?,?,?,?,?,?)
+    merge CellCycle as T
+    using (select ?, ?, ?, ?, ?, ?, ?) as S (cellCycle_UID, cellAssy_UID, endCycle_dts, cycle_num, cycle_type, capacity_charge, capacity_discharge)
+    on S.cellAssy_UID = T.cellAssy_UID and S.cycle_num = T.cycle_num
+    when not matched then insert(cellCycle_UID, cellAssy_UID, endCycle_dts, cycle_num, cycle_type, capacity_charge, capacity_discharge)
+    values (S.cellCycle_UID, S.cellAssy_UID, S.endCycle_dts, S.cycle_num, S.cycle_type, S.capacity_charge, S.capacity_discharge);
     """, cell_cycle_uid, cell_assy_uid, c.end_cycle_dts, c.cycle_num, c.cycle_type, c.cap_charge, c.cap_discharge)
     cell_cycle_uid += 1
 
