@@ -49,118 +49,115 @@ cnxn = pyodbc.connect(cnxn_str)
 cnxn.autocommit = True
 cursor = cnxn.cursor()
 
-basePath = 'C:\\Users\\bcaine\\Desktop\\Dummy Maccor Data\\Data\\ASCIIfiles\\TestFiles';
+basePath = '\\\\24m-fp01\\24m\\MasterData\\Battery_Tester_Backup\\24MBattTester_Maccor\\Data\\ASCIIfiles';
+#basePath = 'C:\\Users\\bcaine\\Desktop\\Dummy Maccor Data\\data\\ASCIIfiles';
 
-#get file list and last updated
-#fileList = [f for f in listdir(basePath) if isfile(join(basePath,f))]
-#fileDateList = [datetime.fromtimestamp(getmtime(basePath + '\\' + f)).strftime("%Y-%m-%d %H:%M:%S") for f in listdir(basePath) if isfile(join(basePath,f)) ]
-fileList = [f for f in listdir(basePath) if isfile(join(basePath,f)) and ("FORM" or "form" or "Form") in f]
-fileDateList = [datetime.fromtimestamp(getmtime(basePath + '\\' + f)).strftime("%Y-%m-%d %H:%M:%S") for f in listdir(basePath) if isfile(join(basePath,f)) and ("FORM" or "form" or "Form") in f]
-errorFiles=[]
+errorFiles = []
 
 cellCycles = []
 
 sys.stdout.write('Working')
 
-for f in fileList:
-
-    # check last update
-    date = datetime.fromtimestamp(getmtime(basePath + '\\' + f)).strftime("%Y-%m-%d %H:%M:%S")
-    row = cursor.execute("""
-    select * from FileUpdate
-    where Filename = ? and LastUpdate = ?;
-    """, f, date).fetchone()
-    if row:
-        sys.stdout.write('^')
-        continue
-
-    # Add row to FileUpdate table
-    cursor.execute("""
-    merge FileUpdate as T
-    using (select ?, ?) as S (Filename, LastUpdate)
-    on S.Filename = T.Filename and S.LastUpdate = T.LastUpdate
-    when not matched then insert(Filename, LastUpdate)
-    values (S.Filename, S.LastUpdate);
-    """, f, date)
-
-    myFile = open(basePath + '\\' + f, 'rb')
-    try:
-        dialect = csv.Sniffer().sniff(myFile.read())        
-        reader = csv.DictReader(myFile, dialect=dialect,delimiter='\t')
-        myFile.seek(0)
-        some_list = reader.fieldnames
-        procTemp = some_list[3]
-        index = procTemp.find('Procedure:')
-        index2 = procTemp.find('.000')
-        procNm = procTemp[index+11:index2]
-
-        lot_tmp = some_list[4]
-        index = lot_tmp.find('Barcode: ')
-        lot_code = lot_tmp[index+9:]
-
-        reader = csv.DictReader(myFile, dialect=dialect,delimiter= '\t')
-
-        cycle_type = 'Form'
-        # look for test_req and cell_idx in file name
-        test_req, cell_idx = None, None
-        test_req_match = re.search('_(?P<number>[0-9]{6})_', f)
-        if test_req_match:
-            test_req = test_req_match.group('number')
-        cell_idx_match = re.search('_(?P<number>[0-9]{4})[^0-9]', f)
-        if cell_idx_match:
-            cell_idx = cell_idx_match.group('number')
+# search folders and subfolders
+for dirpath, dirnames, filenames in os.walk(basePath):
+    for f in filenames:
+        if ("form") in f.lower():
+            # check last update
+            date = datetime.fromtimestamp(getmtime(os.path.join(dirpath, f))).strftime("%Y-%m-%d %H:%M:%S")
+            row = cursor.execute("""
+            select * from FileUpdate
+            where Filename = ? and LastUpdate = ?;
+            """, f, date).fetchone()
+            if row:
+                sys.stdout.write('^')
+                continue
         
-        # Find all the end of step record nums
-        CCchargeStep = None
-#        ESlist= []
-        chargeCap={}
-        dischargeCap={}
-        end_cycle_dts = {}
-        cycle = 1
-        halfCycle = None
+            # Add row to FileUpdate table
+            cursor.execute("""
+            merge FileUpdate as T
+            using (select ?, ?) as S (Filename, LastUpdate)
+            on S.Filename = T.Filename and S.LastUpdate = T.LastUpdate
+            when not matched then insert(Filename, LastUpdate)
+            values (S.Filename, S.LastUpdate);
+            """, f, date)
         
-        # FORM02 should contain cycles 2 and 3
-        if 'form02' in f.lower():
-            cycle += 1
+            myFile = open(os.path.join(dirpath, f), 'rb')
+            try:
+                dialect = csv.Sniffer().sniff(myFile.read())        
+                reader = csv.DictReader(myFile, dialect=dialect,delimiter='\t')
+                myFile.seek(0)
+                some_list = reader.fieldnames
+                procTemp = some_list[3]
+                index = procTemp.find('Procedure:')
+                index2 = procTemp.find('.000')
+                procNm = procTemp[index+11:index2]
         
-        full_cycle = False
-        for row in reader:
-            #Full Charge Condition
-            if int(row["ES"])==133 and row["State"]=='C':
-                CCchargeStep = int(row["Step"])
-            if CCchargeStep:
-                if int(row["ES"])==132 and int(row["Step"])== CCchargeStep + 1:
-                   chargeCap[cycle]=float(row["Amp-hr"])
-                   halfCycle=1
-            #Full Discharge Condition
-            if int(row["ES"])==133 and row["State"]=='D':
-                dischargeCap[cycle]=float(row["Amp-hr"])
-                end_cycle_dts[cycle] = str(row["DPt Time"])
-                if halfCycle==1:
-                    halfCycle=None
+                lot_tmp = some_list[4]
+                index = lot_tmp.find('Barcode: ')
+                lot_code = lot_tmp[index+9:]
+        
+                reader = csv.DictReader(myFile, dialect=dialect,delimiter= '\t')
+        
+                cycle_type = 'Form'
+                # look for test_req and cell_idx in file name
+                test_req, cell_idx = None, None
+                test_req_match = re.search('_(?P<number>[0-9]{6})_', f)
+                if test_req_match:
+                    test_req = test_req_match.group('number')
+                cell_idx_match = re.search('_(?P<number>[0-9]{4})[^0-9]', f)
+                if cell_idx_match:
+                    cell_idx = cell_idx_match.group('number')
+                
+                # Find all the end of step record nums
+                CCchargeStep = None
+        #        ESlist= []
+                chargeCap={}
+                dischargeCap={}
+                end_cycle_dts = {}
+                cycle = 1
+                halfCycle = None
+                
+                # FORM02 should contain cycles 2 and 3
+                if ('form02' or 'form2') in f.lower():
                     cycle += 1
-            #Full Cycle Condition
-            if int(row["ES"])==193 and row["State"]=='O':
-                full_cycle = True
+                
+                full_cycle = False
+                for row in reader:
+                    #Full Charge Condition
+                    if int(row["ES"])==133 and row["State"]=='C':
+                        CCchargeStep = int(row["Step"])
+                    if CCchargeStep:
+                        if int(row["ES"])==132 and int(row["Step"])== CCchargeStep + 1:
+                           chargeCap[cycle]=float(row["Amp-hr"])
+                           halfCycle=1
+                    #Full Discharge Condition
+                    if int(row["ES"])==133 and row["State"]=='D':
+                        dischargeCap[cycle]=float(row["Amp-hr"])
+                        end_cycle_dts[cycle] = str(row["DPt Time"])
+                        if halfCycle==1:
+                            halfCycle=None
+                            cycle += 1
+                    #Full Cycle Condition
+                    if int(row["ES"])==193 and row["State"]=='O':
+                        full_cycle = True
+                
+                if full_cycle:
+                    for key in chargeCap:
+                        try:
+                            c = CellCycle(test_req, lot_code, cell_idx, end_cycle_dts[key], key, cycle_type, chargeCap[key], dischargeCap[key])
+                            cellCycles.append(c)
+                        except KeyError as e:
+                            print 'Key Error in ', f
+                            continue
+                sys.stdout.write('.')
+        #        print fileList[i], "Charge Cap: ", chargeCap, " Discharge Cap: ", dischargeCap
         
-        if full_cycle:
-            for key in chargeCap:
-                c = CellCycle(test_req, lot_code, cell_idx, end_cycle_dts[key], key, cycle_type, chargeCap[key], dischargeCap[key])
-                cellCycles.append(c)
-            
-        sys.stdout.write('.')
-#        print fileList[i], "Charge Cap: ", chargeCap, " Discharge Cap: ", dischargeCap
-
-    except csv.Error, e:
-        errorFiles.append(f)
-        continue
-        
-    finally:
-        myFile.close()
-
-        #for row in spamreader:
-            #print ', '.join(row)
-
+            except csv.Error as e:
+                errorFiles.append(f)
+                continue
+                
+            finally:
+                myFile.close()
 #for c in cellCycles:
 #    print c
 
