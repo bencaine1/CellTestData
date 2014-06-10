@@ -37,21 +37,52 @@ class CellCycle:
 
 ######### SCRAPE ASCII FILES FOR DATA ##########
 
+# connect to db
+cnxn_str = """
+Driver={SQL Server Native Client 11.0};
+Server=172.16.111.235\SQLEXPRESS;
+Database=CellTestData;
+UID=sa;
+PWD=Welcome!;
+"""
+cnxn = pyodbc.connect(cnxn_str)
+cnxn.autocommit = True
+cursor = cnxn.cursor()
+
 basePath = 'C:\\Users\\bcaine\\Desktop\\Dummy Maccor Data\\Data\\ASCIIfiles\\TestFiles';
 
 #get file list and last updated
 #fileList = [f for f in listdir(basePath) if isfile(join(basePath,f))]
-#fileListDate = [datetime.fromtimestamp(getmtime(basePath + '\\' + f)).strftime("%Y-%m-%d %H:%M:%S") for f in listdir(basePath) if isfile(join(basePath,f)) ]
+#fileDateList = [datetime.fromtimestamp(getmtime(basePath + '\\' + f)).strftime("%Y-%m-%d %H:%M:%S") for f in listdir(basePath) if isfile(join(basePath,f)) ]
 fileList = [f for f in listdir(basePath) if isfile(join(basePath,f)) and ("FORM" or "form" or "Form") in f]
-fileListDate = [datetime.fromtimestamp(getmtime(basePath + '\\' + f)).strftime("%Y-%m-%d %H:%M:%S") for f in listdir(basePath) if isfile(join(basePath,f)) and ("FORM" or "form" or "Form") in f]
+fileDateList = [datetime.fromtimestamp(getmtime(basePath + '\\' + f)).strftime("%Y-%m-%d %H:%M:%S") for f in listdir(basePath) if isfile(join(basePath,f)) and ("FORM" or "form" or "Form") in f]
 errorFiles=[]
 
 cellCycles = []
 
 sys.stdout.write('Working')
 
-# check last update
 for f in fileList:
+
+    # check last update
+    date = datetime.fromtimestamp(getmtime(basePath + '\\' + f)).strftime("%Y-%m-%d %H:%M:%S")
+    row = cursor.execute("""
+    select * from FileUpdate
+    where Filename = ? and LastUpdate = ?;
+    """, f, date).fetchone()
+    if row:
+        sys.stdout.write('^')
+        continue
+
+    # Populate FileUpdate table
+    cursor.execute("""
+    merge FileUpdate as T
+    using (select ?, ?) as S (Filename, LastUpdate)
+    on S.Filename = T.Filename and S.LastUpdate = T.LastUpdate
+    when not matched then insert(Filename, LastUpdate)
+    values (S.Filename, S.LastUpdate);
+    """, f, date)
+
     myFile = open(basePath + '\\' + f, 'rb')
     try:
         dialect = csv.Sniffer().sniff(myFile.read())        
@@ -123,6 +154,9 @@ for f in fileList:
     finally:
         myFile.close()
 
+        #for row in spamreader:
+            #print ', '.join(row)
+
 #for c in cellCycles:
 #    print c
 
@@ -130,17 +164,14 @@ print "\nThese files didn't process: ", errorFiles
 
 ########## ADD TO DB ###########
 
-# connect to db
-cnxn_str =    """
-Driver={SQL Server Native Client 11.0};
-Server=172.16.111.235\SQLEXPRESS;
-Database=CellTestData;
-UID=sa;
-PWD=Welcome!;
-"""
-cnxn = pyodbc.connect(cnxn_str)
-cnxn.autocommit = True
-cursor = cnxn.cursor()
+
+# Delete tables if 'delete' passed in as arg.
+if len(sys.argv) > 1 and sys.argv[1] == 'delete':
+    cursor.execute("""
+    delete from CellCycle;
+    delete from CellAssembly;
+    delete from TestRequest;    
+    """)
 
 # Populate TestRequest table
 print 'Populating TestRequest table...'
@@ -204,7 +235,3 @@ for c in cellCycles:
     values (S.cellCycle_UID, S.cellAssy_UID, S.endCycle_dts, S.cycle_num, S.cycle_type, S.capacity_charge, S.capacity_discharge);
     """, cell_cycle_uid, cell_assy_uid, c.end_cycle_dts, c.cycle_num, c.cycle_type, c.cap_charge, c.cap_discharge)
     cell_cycle_uid += 1
-
-
-        #for row in spamreader:
-            #print ', '.join(row)
