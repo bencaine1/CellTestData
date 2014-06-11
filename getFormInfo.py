@@ -62,7 +62,7 @@ sys.stdout.write('Working')
 for dirpath, dirnames, filenames in os.walk(basePath):
     for f in filenames:
         if ("form") in f.lower():
-            # check last update
+            # check last update, skip if already in FileUpdate db
             date = datetime.fromtimestamp(getmtime(os.path.join(dirpath, f))).strftime("%Y-%m-%d %H:%M:%S")
             row = cursor.execute("""
             select * from FileUpdate
@@ -71,16 +71,16 @@ for dirpath, dirnames, filenames in os.walk(basePath):
             if row:
                 sys.stdout.write('^')
                 continue
-        
-            # Add row to FileUpdate table
-            cursor.execute("""
-            merge FileUpdate as T
-            using (select ?, ?) as S (Filename, LastUpdate)
-            on S.Filename = T.Filename and S.LastUpdate = T.LastUpdate
-            when not matched then insert(Filename, LastUpdate)
-            values (S.Filename, S.LastUpdate);
-            """, f, date)
-        
+
+            # look for test req in file name, skip if not present
+            test_req = None
+            test_req_match = re.search('_(?P<number>[0-9]{6})_', f)
+            if test_req_match:
+                test_req = test_req_match.group('number')
+            else:
+                sys.stdout.write(',')
+                continue
+
             myFile = open(os.path.join(dirpath, f), 'rb')
             try:
                 dialect = csv.Sniffer().sniff(myFile.read())        
@@ -91,26 +91,28 @@ for dirpath, dirnames, filenames in os.walk(basePath):
                 index = procTemp.find('Procedure:')
                 index2 = procTemp.find('.000')
                 procNm = procTemp[index+11:index2]
-        
-                lot_tmp = some_list[4]
-                index = lot_tmp.find('Barcode: ')
-                lot_code = lot_tmp[index+9:]
-        
+                
+                # get lot code from E1, skip if not present
+                try:
+                    lot_tmp = some_list[4]
+                    index = lot_tmp.find('Barcode: ')
+                    lot_code = lot_tmp[index+9:]
+                except:
+                    sys.stdout.write('l')
+                    myFile.close()
+                    continue
+                            
                 reader = csv.DictReader(myFile, dialect=dialect,delimiter= '\t')
-        
+
+                cell_idx = None
                 cycle_type = 'Form'
-                # look for test_req and cell_idx in file name
-                test_req, cell_idx = None, None
-                test_req_match = re.search('_(?P<number>[0-9]{6})_', f)
-                if test_req_match:
-                    test_req = test_req_match.group('number')
                 cell_idx_match = re.search('_(?P<number>[0-9]{4})[^0-9]', f)
                 if cell_idx_match:
                     cell_idx = cell_idx_match.group('number')
                 
                 # Find all the end of step record nums
                 CCchargeStep = None
-        #        ESlist= []
+#                ESlist= []
                 chargeCap={}
                 dischargeCap={}
                 end_cycle_dts = {}
@@ -146,13 +148,21 @@ for dirpath, dirnames, filenames in os.walk(basePath):
                         try:
                             c = CellCycle(test_req, lot_code, cell_idx, end_cycle_dts[key], key, cycle_type, chargeCap[key], dischargeCap[key])
                             cellCycles.append(c)
-                        except KeyError as e:
+                        except KeyError:
                             print 'Key Error in ', f
                             continue
+                
+                # All ok, so add row to FileUpdate table
+                cursor.execute("""
+                merge FileUpdate as T
+                using (select ?, ?) as S (Filename, LastUpdate)
+                on S.Filename = T.Filename and S.LastUpdate = T.LastUpdate
+                when not matched then insert(Filename, LastUpdate)
+                values (S.Filename, S.LastUpdate);
+                """, f, date)
                 sys.stdout.write('.')
-        #        print fileList[i], "Charge Cap: ", chargeCap, " Discharge Cap: ", dischargeCap
         
-            except csv.Error as e:
+            except csv.Error, e:
                 errorFiles.append(f)
                 continue
                 
@@ -165,7 +175,6 @@ print "\nThese files didn't process: ", errorFiles
 
 ########## ADD TO DB ###########
 
-
 # Delete tables if 'delete' passed in as arg.
 if len(sys.argv) > 1 and sys.argv[1] == 'delete':
     cursor.execute("""
@@ -177,23 +186,20 @@ if len(sys.argv) > 1 and sys.argv[1] == 'delete':
 # Populate TestRequest table
 print 'Populating TestRequest table...'
 test_req_list = []
-test_req_uid = 1
 for c in cellCycles:
     if c.test_req not in test_req_list:
         cursor.execute("""
         merge TestRequest as T
-        using (select ?, ?) as S (testReq_UID, testReq_num)
+        using (select ?) as S (testReq_num)
         on S.testReq_num = T.testReq_num
-        when not matched then insert(testReq_UID, testReq_num)
-        values (S.testReq_UID, S.testReq_num);
-        """, test_req_uid, c.test_req)
+        when not matched then insert(testReq_num)
+        values (S.testReq_num);
+        """, c.test_req)
         test_req_list.append(c.test_req)
-        test_req_uid += 1
         
 # Populate CellAssembly table
 print 'Populating CellAssembly table...'
 lot_code_list = []
-cell_assy_uid = 1
 for c in cellCycles:
     if c.lot_code not in lot_code_list:
         # determine testReq_UID
@@ -206,17 +212,15 @@ for c in cellCycles:
             test_req_uid = row[0]
         cursor.execute("""
         merge CellAssembly as T
-        using (select ?, ?, ?, ?) as S (cellAssy_UID, lotCode, testReq_UID, cell_index)
+        using (select ?, ?, ?) as S (lotCode, testReq_UID, cell_index)
         on S.lotCode = T.lotCode
-        when not matched then insert(cellAssy_UID, lotCode, testReq_UID, cell_index)
-        values (S.cellAssy_UID, S.lotCode, S.testReq_UID, S.cell_index);
-        """, cell_assy_uid, c.lot_code, test_req_uid, c.cell_idx)
+        when not matched then insert(lotCode, testReq_UID, cell_index)
+        values (S.lotCode, S.testReq_UID, S.cell_index);
+        """, c.lot_code, test_req_uid, c.cell_idx)
         lot_code_list.append(c.lot_code)
-        cell_assy_uid += 1
 
 # Populate CellCycle table
 print 'Populating CellCycle table...'
-cell_cycle_uid = 1
 for c in cellCycles:
     # determine cellAssy_UID
     # Should be 3 CellCycle rows for each 1 CellAssembly row
@@ -230,9 +234,8 @@ for c in cellCycles:
         cell_assy_uid = row[0]
     cursor.execute("""
     merge CellCycle as T
-    using (select ?, ?, ?, ?, ?, ?, ?) as S (cellCycle_UID, cellAssy_UID, endCycle_dts, cycle_num, cycle_type, capacity_charge, capacity_discharge)
+    using (select ?, ?, ?, ?, ?, ?) as S (cellAssy_UID, endCycle_dts, cycle_num, cycle_type, capacity_charge, capacity_discharge)
     on S.cellAssy_UID = T.cellAssy_UID and S.cycle_num = T.cycle_num
-    when not matched then insert(cellCycle_UID, cellAssy_UID, endCycle_dts, cycle_num, cycle_type, capacity_charge, capacity_discharge)
-    values (S.cellCycle_UID, S.cellAssy_UID, S.endCycle_dts, S.cycle_num, S.cycle_type, S.capacity_charge, S.capacity_discharge);
-    """, cell_cycle_uid, cell_assy_uid, c.end_cycle_dts, c.cycle_num, c.cycle_type, c.cap_charge, c.cap_discharge)
-    cell_cycle_uid += 1
+    when not matched then insert(cellAssy_UID, endCycle_dts, cycle_num, cycle_type, capacity_charge, capacity_discharge)
+    values (S.cellAssy_UID, S.endCycle_dts, S.cycle_num, S.cycle_type, S.capacity_charge, S.capacity_discharge);
+    """, cell_assy_uid, c.end_cycle_dts, c.cycle_num, c.cycle_type, c.cap_charge, c.cap_discharge)
