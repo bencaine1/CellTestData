@@ -239,3 +239,8 @@ for c in cellCycles:
     when not matched then insert(cellAssy_UID, endCycle_dts, cycle_num, cycle_type, capacity_charge, capacity_discharge)
     values (S.cellAssy_UID, S.endCycle_dts, S.cycle_num, S.cycle_type, S.capacity_charge, S.capacity_discharge);
     """, cell_assy_uid, c.end_cycle_dts, c.cycle_num, c.cycle_type, c.cap_charge, c.cap_discharge)
+
+#close up shop
+cursor.close()
+del cursor
+cnxn.close()
