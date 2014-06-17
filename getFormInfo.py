@@ -7,6 +7,7 @@ Created on Thu May 29 10:00:32 2014
 import os
 import csv
 from datetime import datetime
+from time import strftime
 from os import listdir
 from os.path import isfile, join, getmtime
 from collections import OrderedDict
@@ -244,3 +245,7 @@ for c in cellCycles:
 cursor.close()
 del cursor
 cnxn.close()
+
+# For "last ran" functionality on website
+with open(r'C:\Users\bcaine\Documents\My Web Sites\EmptySite\globals\form_last_updated.php', 'w') as f:
+    f.write('Last ran on ' + strftime('%Y-%m-%d %H:%M:%S'))
