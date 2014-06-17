@@ -7,6 +7,7 @@ Created on Thu May 29 10:00:32 2014
 import os
 import csv
 from datetime import datetime
+from time import strftime
 from os import listdir
 from os.path import isfile, join, getmtime
 from collections import OrderedDict
@@ -185,52 +186,54 @@ if len(sys.argv) > 1 and sys.argv[1] == 'delete':
 
 # Populate TestRequest table
 print 'Populating TestRequest table...'
-test_req_list = []
 for c in cellCycles:
-    if c.test_req not in test_req_list:
-        cursor.execute("""
-        merge TestRequest as T
-        using (select ?) as S (testReq_num)
-        on S.testReq_num = T.testReq_num
-        when not matched then insert(testReq_num)
-        values (S.testReq_num);
-        """, c.test_req)
-        test_req_list.append(c.test_req)
+    cursor.execute("""
+    merge TestRequest as T
+    using (select ?) as S (testReq_num)
+    on S.testReq_num = T.testReq_num
+    when not matched then insert(testReq_num)
+    values (S.testReq_num);
+    """, c.test_req)
         
 # Populate CellAssembly table
 print 'Populating CellAssembly table...'
-lot_code_list = []
 for c in cellCycles:
-    if c.lot_code not in lot_code_list:
-        # determine testReq_UID
-        test_req_uid = None
-        row = cursor.execute("""
-        select testReq_UID from TestRequest
-        where testReq_num = ?
-        """, c.test_req).fetchone()
-        if row:
-            test_req_uid = row[0]
-        # Merge on same test req UID and cell index
-        cursor.execute("""
-        merge CellAssembly as T
-        using (select ?, ?, ?) as S (lotCode, testReq_UID, cell_index)
-        on S.testReq_UID = T.testReq_UID and S.cell_index = T.cell_index
-        when not matched then insert(lotCode, testReq_UID, cell_index)
-        values (S.lotCode, S.testReq_UID, S.cell_index);
-        """, c.lot_code, test_req_uid, c.cell_idx)
-        lot_code_list.append(c.lot_code)
+    # determine testReq_UID
+    test_req_uid = None
+    row = cursor.execute("""
+    select testReq_UID from TestRequest
+    where testReq_num = ?
+    """, c.test_req).fetchone()
+    if row:
+        test_req_uid = row[0]
+    # Merge on same test req UID and cell index
+    cursor.execute("""
+    merge CellAssembly as T
+    using (select ?, ?, ?) as S (lotCode, testReq_UID, cell_index)
+    on S.testReq_UID = T.testReq_UID and S.cell_index = T.cell_index
+    when not matched then insert(lotCode, testReq_UID, cell_index)
+    values (S.lotCode, S.testReq_UID, S.cell_index);
+    """, c.lot_code, test_req_uid, c.cell_idx)
 
 # Populate CellCycle table
 print 'Populating CellCycle table...'
 for c in cellCycles:
+    test_req_uid = None
+    row = cursor.execute("""
+        select testReq_UID from TestRequest
+        where testReq_num = ?
+        """, c.test_req).fetchone()
+    if row:
+        test_req_uid = row[0]
+
     # determine cellAssy_UID
     # Should be 3 CellCycle rows for each 1 CellAssembly row,
     # if both FORM01 and FORM02 present for a given lot code.
     cell_assy_uid = None
     row = cursor.execute("""
     select cellAssy_UID from CellAssembly
-    where lotCode = ?
-    """, c.lot_code).fetchone()
+    where testReq_UID = ? and cell_index = ?
+    """, test_req_uid, c.cell_idx).fetchone()
     if row:
         cell_assy_uid = row[0]
     cursor.execute("""
@@ -245,3 +248,7 @@ for c in cellCycles:
 cursor.close()
 del cursor
 cnxn.close()
+
+# For "last ran" functionality on website
+with open(r'C:\Users\bcaine\Documents\My Web Sites\EmptySite\globals\form_last_updated.php', 'w') as f:
+    f.write('Last ran on ' + strftime('%Y-%m-%d %H:%M:%S'))
