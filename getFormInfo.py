@@ -50,8 +50,8 @@ cnxn = pyodbc.connect(cnxn_str)
 cnxn.autocommit = True
 cursor = cnxn.cursor()
 
-basePath = r'\\24m-fp01\24m\MasterData\Battery_Tester_Backup\24MBattTester_Maccor\Data\ASCIIfiles'
-#basePath = 'C:\\Users\\bcaine\\Desktop\\Dummy Maccor Data\\data\\ASCIIfiles'
+basePath = '\\\\24m-fp01\\24m\\MasterData\\Battery_Tester_Backup\\24MBattTester_Maccor\\Data\\ASCIIfiles';
+#basePath = 'C:\\Users\\bcaine\\Desktop\\Dummy Maccor Data\\data\\ASCIIfiles';
 
 errorFiles = []
 
