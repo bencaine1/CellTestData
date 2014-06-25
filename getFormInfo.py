@@ -50,8 +50,8 @@ cnxn = pyodbc.connect(cnxn_str)
 cnxn.autocommit = True
 cursor = cnxn.cursor()
 
-basePath = '\\\\24m-fp01\\24m\\MasterData\\Battery_Tester_Backup\\24MBattTester_Maccor\\Data\\ASCIIfiles';
-#basePath = 'C:\\Users\\bcaine\\Desktop\\Dummy Maccor Data\\data\\ASCIIfiles';
+basePath = r'\\24m-fp01\24m\\MasterData\Battery_Tester_Backup\24MBattTester_Maccor\Data\ASCIIfiles'
+#basePath = 'C:\\Users\\bcaine\\Desktop\\Dummy Maccor Data\\data\\ASCIIfiles'
 
 errorFiles = []
 
@@ -74,6 +74,7 @@ for dirpath, dirnames, filenames in os.walk(basePath):
                 continue
 
             # look for test req in file name, skip if not present
+            # For now, only processing the new 6-digit test req codes.
             test_req = None
             test_req_match = re.search('_(?P<number>[0-9]{6})_', f)
             if test_req_match:
@@ -82,6 +83,15 @@ for dirpath, dirnames, filenames in os.walk(basePath):
                 sys.stdout.write(',')
                 continue
 
+            # look for cell idx in file name, skip if not present
+            cell_idx = None
+            cell_idx_match = re.search('_(?P<number>[0-9]{4})[^0-9]', f)
+            if cell_idx_match:
+                cell_idx = cell_idx_match.group('number')
+            else:
+                sys.stdout.write('c')
+                continue
+            
             myFile = open(os.path.join(dirpath, f), 'rb')
             try:
                 dialect = csv.Sniffer().sniff(myFile.read())        
@@ -105,11 +115,7 @@ for dirpath, dirnames, filenames in os.walk(basePath):
                             
                 reader = csv.DictReader(myFile, dialect=dialect,delimiter= '\t')
 
-                cell_idx = None
                 cycle_type = 'Form'
-                cell_idx_match = re.search('_(?P<number>[0-9]{4})[^0-9]', f)
-                if cell_idx_match:
-                    cell_idx = cell_idx_match.group('number')
                 
                 # Find all the end of step record nums
                 CCchargeStep = None
@@ -177,60 +183,61 @@ print "\nThese files didn't process: ", errorFiles
 ########## ADD TO DB ###########
 
 # Delete tables if 'delete' passed in as arg.
-if len(sys.argv) > 1 and sys.argv[1] == 'delete':
-    cursor.execute("""
-    delete from CellCycle;
-    delete from CellAssembly;
-    delete from TestRequest;    
-    """)
+#if len(sys.argv) > 1 and sys.argv[1] == 'delete':
+#    cursor.execute("""
+#    delete from CellCycle;
+#    delete from CellAssembly;
+#    delete from TestRequest;    
+#    """)
 
 # Populate TestRequest table
 print 'Populating TestRequest table...'
-test_req_list = []
 for c in cellCycles:
-    if c.test_req not in test_req_list:
-        cursor.execute("""
-        merge TestRequest as T
-        using (select ?) as S (testReq_num)
-        on S.testReq_num = T.testReq_num
-        when not matched then insert(testReq_num)
-        values (S.testReq_num);
-        """, c.test_req)
-        test_req_list.append(c.test_req)
+    cursor.execute("""
+    merge TestRequest as T
+    using (select ?) as S (testReq_num)
+    on S.testReq_num = T.testReq_num
+    when not matched then insert(testReq_num)
+    values (S.testReq_num);
+    """, c.test_req)
         
 # Populate CellAssembly table
 print 'Populating CellAssembly table...'
-lot_code_list = []
 for c in cellCycles:
-    if c.lot_code not in lot_code_list:
-        # determine testReq_UID
-        test_req_uid = None
-        row = cursor.execute("""
-        select testReq_UID from TestRequest
-        where testReq_num = ?
-        """, c.test_req).fetchone()
-        if row:
-            test_req_uid = row[0]
-        cursor.execute("""
-        merge CellAssembly as T
-        using (select ?, ?, ?) as S (lotCode, testReq_UID, cell_index)
-        on S.lotCode = T.lotCode
-        when not matched then insert(lotCode, testReq_UID, cell_index)
-        values (S.lotCode, S.testReq_UID, S.cell_index);
-        """, c.lot_code, test_req_uid, c.cell_idx)
-        lot_code_list.append(c.lot_code)
+    # determine testReq_UID
+    test_req_uid = None
+    row = cursor.execute("""
+    select testReq_UID from TestRequest
+    where testReq_num = ?
+    """, c.test_req).fetchone()
+    if row:
+        test_req_uid = row[0]
+    cursor.execute("""
+    merge CellAssembly as T
+    using (select ?, ?, ?) as S (lotCode, testReq_UID, cell_index)
+    on S.testReq_UID = T.testReq_UID and S.cell_index = T.cell_index
+    when not matched then insert(lotCode, testReq_UID, cell_index)
+    values (S.lotCode, S.testReq_UID, S.cell_index);
+    """, c.lot_code, test_req_uid, c.cell_idx)
 
 # Populate CellCycle table
 print 'Populating CellCycle table...'
 for c in cellCycles:
+    test_req_uid = None
+    row = cursor.execute("""
+    select testReq_UID from TestRequest
+    where testReq_num = ?
+    """, c.test_req).fetchone()
+    if row:
+        test_req_uid = row[0]
     # determine cellAssy_UID
     # Should be 3 CellCycle rows for each 1 CellAssembly row
     # (if both FORM01 and FORM02 present for a given lot code)
     cell_assy_uid = None
     row = cursor.execute("""
     select cellAssy_UID from CellAssembly
-    where lotCode = ?
-    """, c.lot_code).fetchone()
+    where testreq_UID = ? and cell_index = ?
+    """, test_req_uid, c.cell_idx).fetchone()
     if row:
         cell_assy_uid = row[0]
     cursor.execute("""
